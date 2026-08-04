@@ -17,8 +17,8 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
-            cd /path/ke/folder/aplikasi/di/server
+            cd /var/www/my-app
             git pull origin main
-            
-            # Restart aplikasi / service di server (sesuaikan dengan stack Anda)
-            # Contoh: sudo systemctl restart myapp
+            php artisan route:clear
+            php artisan config:cache
+            php artisan view:clear
