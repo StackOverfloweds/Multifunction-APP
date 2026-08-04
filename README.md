@@ -1,58 +1,75 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Multifunction App (Laravel + PostgreSQL + Cloudflare Tunnel)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Sistem aplikasi web multifungsi berbasis **Laravel** dan **PostgreSQL** yang berjalan di **Ubuntu Server (HomeServer)**. Aplikasi ini dirancang untuk manajemen file, antrean tugas (*task monitoring*), dan integrasi otomatisasi background process.
 
-## About Laravel
+---
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## 🛠️ Stack & Infrastructure
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- **OS:** Ubuntu Server 24.04 LTS
+- **Web Server:** Nginx 1.28
+- **PHP:** PHP 8.5 (FPM)
+- **Database:** PostgreSQL (`laravel_db`)
+- **Framework:** Laravel 11.x / 13.x
+- **Public Tunneling:** Cloudflare Quick Tunnel (`cloudflared`) via Systemd
+- **Private Access:** Tailscale VPN
+- **Version Control & CI/CD:** Git, GitHub, & GitHub Actions (Auto-Deploy)
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+## 🚀 Dokumentasi Setup Server dari Awal
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
+### 1. Cloudflare Quick Tunnel (Background Service)
+Systemd service dibuat di `/etc/systemd/system/quick-tunnel.service` agar tunnel tetap aktif tanpa domain:
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+sudo systemctl enable --now quick-tunnel.service
+# Cek URL Publik:
+sudo journalctl -u quick-tunnel.service | grep trycloudflare.com
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+### 2. Database PostgreSQL Setup
+```sql
+CREATE DATABASE laravel_db;
+CREATE USER laravel_user WITH PASSWORD 'password_super_aman';
+GRANT ALL PRIVILEGES ON DATABASE laravel_db TO laravel_user;
+ALTER DATABASE laravel_db OWNER TO laravel_user;
+```
 
-## Contributing
+### 3. Setup Project Laravel & Extension PHP
+- Install ekstensi PHP & Composer: `php-fpm`, `php-pgsql`, `php-curl`, `php-mbstring`, `php-xml`, `php-zip`, `php-gd`, `php-cli`.
+- Setup environment `.env`: `DB_CONNECTION=pgsql`
+- Hak akses direktori storage:
+  ```bash
+  sudo chown -R home:www-data /var/www/my-app
+  sudo chmod -R 775 /var/www/my-app/storage /var/www/my-app/bootstrap/cache
+  ```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+### 4. Nginx FastCGI Pass Configuration
+Mengaitkan Virtual Host Nginx `/etc/nginx/sites-available/my-app` ke Socket PHP 8.5 FPM:
+```nginx
+location ~ \.php$ {
+    fastcgi_pass unix:/var/run/php/php8.5-fpm.sock;
+    fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+    include fastcgi_params;
+}
+```
 
-## Code of Conduct
+---
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## 🎯 Rencana Fitur Aplikasi (Roadmap)
 
-## Security Vulnerabilities
+1. **Task & Job Monitoring System:**
+   - Visualisasi antrean tugas background process via Laravel Queue Worker & Supervisor.
+   - Monitoring resource server real-time (Laravel Pulse).
+2. **File Management System:**
+   - Upload, penyimpanan, dan pengolahan file lampiran tugas ke PostgreSQL & Local Storage (`storage/app/public`).
+3. **Automated CI/CD Pipeline:**
+   - Alur pengodean bertingkat: `on-dev-*` ➡️ `staging` ➡️ `main` (Auto Deploy via SSH GitHub Actions).
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+---
 
-## License
+## 🌿 Branching Strategy
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+- **`main`**: Branch production stabil (terintegrasi Auto-Deploy ke server).
+- **`staging`**: Branch integrasi dan testing sebelum ke production.
+- **`on-dev-*`**: Branch pengembangan fitur individual.
