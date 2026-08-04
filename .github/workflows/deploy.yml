@@ -24,7 +24,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
-            cd /var/www/Multifunction-APP
+            cd /var/www/my-app
             git pull origin main
             php artisan route:clear
             php artisan config:cache
