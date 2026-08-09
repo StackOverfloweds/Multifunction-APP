@@ -2,11 +2,8 @@
 
 use App\Http\Controllers\FileController;
 use App\Http\Controllers\ProfileController;
-<<<<<<< Updated upstream
-=======
 use App\Http\Controllers\ServerPublicDashboardController;
 use App\Http\Controllers\StorageController;
->>>>>>> Stashed changes
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
