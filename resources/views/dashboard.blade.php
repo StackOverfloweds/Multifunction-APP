@@ -1,18 +1,5 @@
 <x-app-layout>
     <x-slot name="header">
-<<<<<<< Updated upstream
-        <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-            {{ __('Dashboard') }}
-        </h2>
-    </x-slot>
-
-    <div class="py-12">
-        <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
-            <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg">
-                <div class="p-6 text-gray-900">
-                    Selamat datang kembali, <span class="font-bold">{{ Auth::user()->username }}</span>! {{ __("You're logged in!") }}
-                </div>
-=======
         <div class="flex items-center justify-between">
             <h2 class="font-bold text-xl text-slate-100 tracking-tight flex items-center gap-2">
                 <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -22,7 +9,6 @@
                 <span class="px-3 py-1 text-xs font-mono font-semibold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-sm">
                     ROLE: {{ strtoupper(auth()->user()->role ?? 'USER') }}
                 </span>
->>>>>>> Stashed changes
             </div>
         </div>
     </x-slot>
