@@ -34,6 +34,28 @@ class StorageController extends Controller
     }
 
     /**
+     * Delete a stored file (physical file + database record)
+     */
+    public function destroy (Request $request, string $id) :\Illuminate\Http\RedirectResponse
+    {
+        $user = $request->user();
+ 
+        if (! in_array($user->role, ['super_admin', 'admin'], true)) {
+            abort(403, 'Anda tidak memiliki akses untuk menghapus file ini.');
+        }
+ 
+        $record = FileStorage::findOrFail($id);
+ 
+        if (Storage::exists($record->file_path)) {
+            Storage::delete($record->file_path);
+        }
+ 
+        $record->delete();
+ 
+        return redirect()->route('storage.index')->with('success', 'File berhasil dihapus.');
+    }
+
+    /**
      * process the accetp and merge the chunked file
      */
     public function storeChunk (Request $request) :JsonResponse 
@@ -41,35 +63,42 @@ class StorageController extends Controller
         $validated = $request ->validate([
             'file' => ['required', 'file'],
             'upload_id' => ['required', 'string', 'alpha_dash'],
-            'chunk_index' => ['required', 'integer', 'min:0'],
+            'chunk_index' => ['required', 'integer', 'min:0', 'lt:total_chunks'],
             'total_chunks' => ['required', 'integer', 'min:1'],
             'filename' => ['required', 'string', 'max:255'],
         ]);
-
+ 
         $uploadId = $validated['upload_id'];
-        $chunkIndex = $validated['chunk)index'];
+        $chunkIndex = $validated['chunk_index'];
         $totalChunks = $validated['total_chunks'];
         $filename = $validated['filename'];
-
+ 
         // directory isolation for a while
         $tempDirectory = "storage/temp/{$uploadId}";
-        $chunkPath = "{$tempDirectory}/part_{$chunkIndex}";
-
+ 
         // save the chunked file 
         $request->file('file')->storeAs($tempDirectory, "part_{$chunkIndex}");
-
-        // check the value of chuncked file thats been uploaded
-        $uploadedChunked = count(Storage::files($tempDirectory));
-
+ 
+        // Bersihkan stat/realpath cache PHP sebelum mengecek isi direktori.
+        clearstatcache(true);
+ 
+        // Verifikasi keberadaan setiap chunk secara eksplisit (part_0 s/d part_N-1)
+        $missingChunks = [];
+        for ($i = 0; $i < $totalChunks; $i++) {
+            if (!Storage::exists("{$tempDirectory}/part_{$i}")) {
+                $missingChunks[] = $i;
+            }
+        }
+        $uploadedChunked = $totalChunks - count($missingChunks);
+ 
         // if the chunked file is completely fix, then add all
-        if ($uploadedChunked === $totalChunks) 
+        if (empty($missingChunks)) 
         {
             $finalPath = $this->assembleChunks($tempDirectory, $filename, $totalChunks);
-
+ 
             $fullDiskPath = Storage::path($finalPath);
-
+ 
             $record = FileStorage::create([
-                'id' => (string) \Illuminate\Support\Str::uuid(),
                 'user_id' => $request->user()->id,
                 'original_name' => $filename,
                 'file_path' => $finalPath,
@@ -78,21 +107,44 @@ class StorageController extends Controller
                 'file_hash' => hash_file('sha256', $fullDiskPath),
                 'storage_node' => config('app.storage_node', 'node-1'),
             ]);
-
+ 
             Storage::deleteDirectory($tempDirectory);
-
+ 
             return response()->json([
                 'status' => 'completed',
                 'message' => 'Upload berhasil diselesaikan.',
                 'data' => $record,
             ], 201);
         }
-
+ 
         return response()->json([
             'status' => 'uploading',
             'progress' => round(($uploadedChunked / $totalChunks) * 100, 2),
+            'received' => $uploadedChunked,
+            'total' => $totalChunks,
+            'missing_chunks' => $missingChunks,
             'message' => "Chunk {$chunkIndex} berhasil diterima.",
         ]);
+        }
+
+        /**
+         * Download a Stored File
+         * 
+         */
+        public function download (Request $request, string $id) :\Symfony\Component\HttpFoundation\StreamedResponse
+        {
+            $user = $request->user();
+            $record = FileStorage::findOrFail($id);
+
+            // role user only can download
+            if ($user->role === 'user' && $record->user_id !== $user->id) {
+                abort(403, 'You dont have access to this file');
+            }
+
+            if (! Storage::exists($record->file_path)) {
+                abort(404, 'File Not Found');
+            }
+            return Storage::download($record->file_path, $record->original_name);
         }
 
         /**
@@ -107,6 +159,8 @@ class StorageController extends Controller
         Storage::makeDirectory('uploads');
 
         $outputStream = fopen($destinationFullPath, 'wb');
+
+        clearstatcache(true);
 
         for ($i = 0; $i < $totalChunks; $i++) {
             $chunkPath = Storage::path("{$tempDir}/part_{$i}");
@@ -123,4 +177,3 @@ class StorageController extends Controller
         return $destinationRelativePath;
         }
     }
-

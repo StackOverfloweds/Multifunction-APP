@@ -22,7 +22,7 @@ Route::middleware('auth')->group(function () {
     // file
     Route::get('/storage', [StorageController::class, 'index'])->name('storage.index');
     Route::post('/storage/upload', [StorageController::class, 'storeChunk'])->name('storage.upload');
-
+    Route::get('/storage/{id}/download', [StorageController::class, 'download'])->name('storage.download');
     Route::middleware(['role:admin'])->group(function () {
         Route::delete('/storage/{id}', [StorageController::class, 'destroy'])->name('storage.destroy');
     });
