@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\FileController;
+use App\Http\Controllers\FolderController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ServerPublicDashboardController;
 use App\Http\Controllers\StorageController;
@@ -23,8 +24,18 @@ Route::middleware('auth')->group(function () {
     Route::get('/storage', [StorageController::class, 'index'])->name('storage.index');
     Route::post('/storage/upload', [StorageController::class, 'storeChunk'])->name('storage.upload');
     Route::get('/storage/{id}/download', [StorageController::class, 'download'])->name('storage.download');
+    Route::patch('/storage/{id}/move', [StorageController::class, 'move'])->name('storage.move');
+
+    Route::get('/storage/folders/tree', [FolderController::class, 'tree'])->name('storage.folders.tree');
+    Route::post('/storage/folders', [FolderController::class, 'store'])->name('storage.folders.store');
+    Route::post('/storage/folders/resolve-path', [FolderController::class, 'resolvePath'])->name('storage.folders.resolve');
+    Route::patch('/storage/folders/{id}', [FolderController::class, 'rename'])->name('storage.folders.rename');
+    Route::patch('/storage/folders/{id}/move', [FolderController::class, 'move'])->name('storage.folders.move');
+
     Route::middleware(['role:admin'])->group(function () {
         Route::delete('/storage/{id}', [StorageController::class, 'destroy'])->name('storage.destroy');
+        Route::delete('/storage/folders/{id}', [FolderController::class, 'destroy'])->name('storage.folders.destroy');
+
     });
 });
 

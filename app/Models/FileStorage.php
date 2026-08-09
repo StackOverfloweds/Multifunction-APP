@@ -8,6 +8,7 @@ class FileStorage extends Model
 {
     protected $fillable = [
         'user_id',
+        'folder_id',
         'original_name',
         'file_path',
         'mime_type',
@@ -20,5 +21,10 @@ class FileStorage extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function folder()
+    {
+        return $this->belongsTo(Folder::class);
     }
 }
