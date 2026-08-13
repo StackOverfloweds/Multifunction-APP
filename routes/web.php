@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AIEngineerController;
 use App\Http\Controllers\FileController;
 use App\Http\Controllers\FolderController;
 use App\Http\Controllers\ProfileController;
@@ -37,6 +38,12 @@ Route::middleware('auth')->group(function () {
         Route::delete('/storage/folders/{id}', [FolderController::class, 'destroy'])->name('storage.folders.destroy');
 
     });
+});
+
+Route::middleware(['auth'])->prefix('ai-engineer')->name('ai-engineer.')->group(function () {
+    Route::get('/', [AIEngineerController::class, 'index'])->name('index');
+    Route::post('/conversations', [AIEngineerController::class, 'store'])->name('store');
+    Route::post('/conversations/{conversation}/send', [AIEngineerController::class, 'send'])->name('send');
 });
 
 require __DIR__.'/auth.php';
