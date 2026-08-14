@@ -29,7 +29,16 @@ class AIEngineerController extends Controller
             // berbeda antar versi paket.
             $activeConversation = Auth::user()->conversations()
                 ->whereKey($request->query('conversation'))
-                ->with('messages')
+                ->with(['messages' => function ($query) {
+                    // PENTING: paket laravel/ai menyimpan row internal
+                    // (mis. hasil pengecekan moderasi/guardrail) di tabel
+                    // yang sama dengan role selain 'user'/'assistant'.
+                    // Kalau tidak difilter, row semacam itu ikut muncul
+                    // sebagai bubble chat aneh ("User Safety: safe", dst)
+                    // di frontend. Cukup ambil role percakapan asli saja.
+                    $query->whereIn('role', ['user', 'assistant'])
+                        ->orderBy('created_at');
+                }])
                 ->firstOrFail();
         }
 
@@ -41,6 +50,9 @@ class AIEngineerController extends Controller
      * Dibuat eksplisit (bukan lazy saat prompt pertama) supaya ID-nya
      * langsung tersedia untuk sidebar & URL, tanpa perlu menunggu
      * respons AI pertama selesai.
+     *
+     * Judul masih default 'Percakapan Baru' di sini — baru diganti
+     * di send() begitu pesan pertama masuk, lihat generateTitle().
      */
     public function store(Request $request)
     {
@@ -74,6 +86,16 @@ class AIEngineerController extends Controller
             'message' => ['required', 'string', 'max:8000'],
         ]);
 
+        // Auto-generate judul dari pesan pertama, supaya sidebar tidak
+        // menampilkan "Percakapan Baru" terus untuk semua percakapan.
+        // Dicek dulu title-nya masih default supaya ini cuma jalan
+        // sekali per percakapan (pesan pertama), bukan tiap kirim pesan.
+        if ($conversation->title === 'Percakapan Baru') {
+            $conversation->update([
+                'title' => $this->generateTitle($request->input('message')),
+            ]);
+        }
+
         // set_time_limit(0) penting untuk request panjang (reasoning model,
         // tool call berantai, dll) supaya tidak keputus oleh max_execution_time.
         set_time_limit(0);
@@ -82,5 +104,39 @@ class AIEngineerController extends Controller
             ->continue($conversation->id, as: Auth::user())
             ->stream($request->input('message'))
             ->usingVercelDataProtocol();
+    }
+
+    /**
+     * Hapus percakapan beserta seluruh pesannya.
+     *
+     * Kolom conversation_id di tabel pesan cuma diberi index biasa di
+     * migration (bukan foreign key constraint dengan ON DELETE CASCADE),
+     * jadi pesan-pesannya harus dihapus manual di sini — kalau tidak,
+     * row-nya akan jadi orphan di database.
+     */
+    public function destroy(Conversation $conversation)
+    {
+        abort_unless(
+            Auth::user()->conversations()->whereKey($conversation->id)->exists(),
+            403
+        );
+
+        $conversation->messages()->delete();
+        $conversation->delete();
+
+        return response()->json(['deleted' => true]);
+    }
+
+    /**
+     * Judul sederhana dari pesan pertama: rapikan whitespace/newline
+     * jadi satu baris, lalu potong ke panjang yang wajar buat
+     * ditampilkan di sidebar (konsisten dengan pemotongan di sisi
+     * JS pada index.blade.php — updateSidebarTitle()).
+     */
+    private function generateTitle(string $message): string
+    {
+        $clean = trim(preg_replace('/\s+/', ' ', $message));
+
+        return Str::limit($clean, 50);
     }
 }

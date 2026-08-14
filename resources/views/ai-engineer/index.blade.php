@@ -10,6 +10,9 @@
       NAMA KOLOM di bawah ini (role/content) adalah ASUMSI mengikuti konvensi
       umum — kalau setelah migrate ternyata beda, sesuaikan bagian
       $m->role / $m->content di PHP dan JS di bawah.
+      Role selain 'user'/'assistant' (mis. row moderasi/guardrail internal
+      paket) sudah difilter di AIEngineerController@index sebelum sampai
+      ke view ini.
 --}}
 <x-app-layout>
     <x-slot name="header">
@@ -24,6 +27,8 @@
         initialMessages: {{ $activeConversation ? $activeConversation->messages->map(fn($m) => ['role' => $m->role, 'content' => $m->content])->toJson() : '[]' }},
         sendUrlTemplate: '{{ route('ai-engineer.send', ['conversation' => '__ID__']) }}',
         storeUrl: '{{ route('ai-engineer.store') }}',
+        deleteUrlTemplate: '{{ route('ai-engineer.destroy', ['conversation' => '__ID__']) }}',
+        indexUrl: '{{ route('ai-engineer.index') }}',
     })"
     x-init="
         const setHeight = () => { $el.style.height = (window.innerHeight - $el.getBoundingClientRect().top) + 'px' };
@@ -45,18 +50,38 @@
 
         <div class="flex-1 overflow-y-auto py-2">
             @forelse ($conversations as $conv)
-                <a
-                    href="{{ route('ai-engineer.index', ['conversation' => $conv->id]) }}"
-                    class="block px-4 py-3 text-sm border-l-2 transition
+                <div
+                    class="group relative flex items-center border-l-2 transition
                         {{ $activeConversation?->id === $conv->id
-                            ? 'border-teal-400 bg-slate-800/70 text-slate-50'
-                            : 'border-transparent text-slate-400 hover:bg-slate-800/40 hover:text-slate-200' }}"
+                            ? 'border-teal-400 bg-slate-800/70'
+                            : 'border-transparent hover:bg-slate-800/40' }}"
                 >
-                    <div class="truncate font-medium">{{ $conv->title ?? 'Percakapan' }}</div>
-                    <div class="text-xs text-slate-500 mt-0.5">
-                        {{ $conv->updated_at?->diffForHumans() ?? '' }}
-                    </div>
-                </a>
+                    <a
+                        href="{{ route('ai-engineer.index', ['conversation' => $conv->id]) }}"
+                        data-conversation-id="{{ $conv->id }}"
+                        class="flex-1 min-w-0 px-4 py-3 text-sm
+                            {{ $activeConversation?->id === $conv->id
+                                ? 'text-slate-50'
+                                : 'text-slate-400 hover:text-slate-200' }}"
+                    >
+                        <div class="truncate font-medium conv-title">{{ $conv->title ?? 'Percakapan' }}</div>
+                        <div class="text-xs text-slate-500 mt-0.5">
+                            {{ $conv->updated_at?->diffForHumans() ?? '' }}
+                        </div>
+                    </a>
+
+                    <button
+                        type="button"
+                        @click.prevent.stop="deleteConversation('{{ $conv->id }}')"
+                        title="Hapus percakapan"
+                        class="shrink-0 mr-2 p-1.5 rounded text-slate-600 opacity-0 group-hover:opacity-100
+                               hover:text-red-400 hover:bg-red-500/10 transition"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3m2 0v13a2 2 0 01-2 2H8a2 2 0 01-2-2V7h12z" />
+                        </svg>
+                    </button>
+                </div>
             @empty
                 <p class="px-4 py-6 text-sm text-slate-500 text-center">
                     Belum ada percakapan. Mulai satu di atas.
@@ -132,9 +157,7 @@
     </main>
 </div>
 
-<script src="//cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" defer></script>
-<script src="//cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js" defer></script>
-<script src="//unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 
 <style>
     /* Styling manual untuk hasil render Markdown di bubble chat AI —
@@ -192,12 +215,14 @@
     }
 </style>
 <script>
-function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl }) {
+function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl, deleteUrlTemplate, indexUrl }) {
     return {
         conversationId,
         messages: initialMessages,
         draft: '',
         isStreaming: false,
+        deleteUrlTemplate,
+        indexUrl,
 
         getCsrfToken() {
             const meta = document.querySelector('meta[name="csrf-token"]');
@@ -240,6 +265,46 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
             }
         },
 
+        async deleteConversation(id) {
+            if (!confirm('Hapus percakapan ini? Tindakan ini tidak bisa dibatalkan.')) return;
+
+            try {
+                const url = this.deleteUrlTemplate.replace('__ID__', id);
+                const res = await fetch(url, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRF-TOKEN': this.getCsrfToken(),
+                        'Accept': 'application/json',
+                    },
+                });
+
+                if (res.status === 419) {
+                    alert('Sesi kadaluarsa (CSRF token invalid). Silakan refresh halaman lalu coba lagi.');
+                    return;
+                }
+
+                if (!res.ok) {
+                    alert('Gagal menghapus percakapan. Status: ' + res.status);
+                    return;
+                }
+
+                // Kalau yang dihapus adalah percakapan yang sedang dibuka,
+                // balik ke halaman AI Engineer kosong (tanpa ?conversation=).
+                if (id === this.conversationId) {
+                    window.location.href = this.indexUrl;
+                    return;
+                }
+
+                // Kalau bukan yang sedang aktif, cukup hilangkan barisnya
+                // dari sidebar tanpa reload halaman.
+                const link = document.querySelector(`a[data-conversation-id="${id}"]`);
+                link?.closest('.group')?.remove();
+            } catch (e) {
+                console.error(e);
+                alert('Terjadi kesalahan saat menghapus percakapan: ' + e.message);
+            }
+        },
+
         async sendMessage() {
             const text = this.draft.trim();
             if (!text || this.isStreaming) return;
@@ -255,6 +320,13 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
             this.draft = '';
             this.isStreaming = true;
             this.scrollToBottom();
+
+            // Optimistic UI: kalau ini pesan pertama di percakapan ini,
+            // langsung update teks di sidebar tanpa nunggu reload —
+            // logikanya disamakan dengan Str::limit(..., 50) di backend.
+            if (this.messages.length === 1) {
+                this.updateSidebarTitle(text);
+            }
 
             const url = sendUrlTemplate.replace('__ID__', this.conversationId);
             const assistantIndex = this.messages.push({ role: 'assistant', content: '' }) - 1;
@@ -342,12 +414,22 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
             // boleh dipercaya mentah-mentah, bisa saja (sengaja/tidak
             // sengaja) mengandung tag <script> atau sejenisnya.
             if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-                // fallback kalau CDN gagal load, minimal tidak error
+                // fallback kalau CDN/bundle gagal load, minimal tidak error
                 return msg.content;
             }
 
             const html = marked.parse(msg.content ?? '');
             return DOMPurify.sanitize(html);
+        },
+
+        updateSidebarTitle(text) {
+            const el = document.querySelector(
+                `a[data-conversation-id="${this.conversationId}"] .conv-title`
+            );
+            if (!el) return;
+
+            const clean = text.replace(/\s+/g, ' ').trim();
+            el.textContent = clean.length > 50 ? clean.slice(0, 50) + '...' : clean;
         },
 
         scrollToBottom() {

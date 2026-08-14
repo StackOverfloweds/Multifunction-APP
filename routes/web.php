@@ -44,6 +44,7 @@ Route::middleware(['auth'])->prefix('ai-engineer')->name('ai-engineer.')->group(
     Route::get('/', [AIEngineerController::class, 'index'])->name('index');
     Route::post('/conversations', [AIEngineerController::class, 'store'])->name('store');
     Route::post('/conversations/{conversation}/send', [AIEngineerController::class, 'send'])->name('send');
+    Route::delete('/conversations/{conversation}', [AIEngineerController::class, 'destroy'])->name('destroy');
 });
 
 require __DIR__.'/auth.php';
