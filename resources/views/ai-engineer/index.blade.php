@@ -34,14 +34,35 @@
         const setHeight = () => { $el.style.height = (window.innerHeight - $el.getBoundingClientRect().top) + 'px' };
         setHeight();
         window.addEventListener('resize', setHeight);
+
+        // Sidebar overlay di layar sempit (< md), sidebar statis di desktop.
+        // Kalau layar di-resize melewati breakpoint md, paksa state
+        // menyesuaikan supaya tidak nyangkut ke-toggle di posisi yang salah
+        // (mis. habis dibuka di HP lalu layar diputar/rotate ke landscape lebar).
+        const syncSidebar = () => { if (window.innerWidth >= 768) sidebarOpen = true; };
+        window.addEventListener('resize', syncSidebar);
     "
-    class="flex bg-slate-950 text-slate-100"
+    class="relative flex bg-slate-950 text-slate-100"
 >
+    {{-- OVERLAY: hanya tampil di mobile saat sidebar dibuka, klik buat nutup --}}
+    <div
+        x-show="sidebarOpen"
+        x-transition.opacity
+        @click="sidebarOpen = false"
+        class="fixed inset-0 z-30 bg-black/60 md:hidden"
+        style="display: none;"
+    ></div>
+
     {{-- SIDEBAR --}}
-    <aside class="w-72 shrink-0 border-r border-slate-800 bg-slate-900/60 flex flex-col">
+    <aside
+        :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+        class="fixed inset-y-0 left-0 z-40 w-72 shrink-0 border-r border-slate-800 bg-slate-900
+               flex flex-col transition-transform duration-200 ease-out
+               md:static md:translate-x-0 md:bg-slate-900/60"
+    >
         <div class="p-4 border-b border-slate-800">
             <button
-                @click="createConversation()"
+                @click="if (window.innerWidth < 768) sidebarOpen = false; createConversation()"
                 class="w-full flex items-center justify-center gap-2 rounded-lg bg-teal-500/10 text-teal-400 border border-teal-500/30 px-3 py-2 text-sm font-medium hover:bg-teal-500/20 transition"
             >
                 <span class="text-lg leading-none">+</span> Percakapan Baru
@@ -59,6 +80,7 @@
                     <a
                         href="{{ route('ai-engineer.index', ['conversation' => $conv->id]) }}"
                         data-conversation-id="{{ $conv->id }}"
+                        @click="if (window.innerWidth < 768) sidebarOpen = false"
                         class="flex-1 min-w-0 px-4 py-3 text-sm
                             {{ $activeConversation?->id === $conv->id
                                 ? 'text-slate-50'
@@ -97,12 +119,24 @@
 
     {{-- CHAT AREA --}}
     <main class="flex-1 flex flex-col min-w-0">
-        <div class="h-14 shrink-0 border-b border-slate-800 flex items-center px-6">
-            <h1 class="text-sm font-semibold text-slate-200">AI Engineer</h1>
-            <span class="ml-2 text-xs text-slate-500">Ditenagai OpenRouter.</span>
+        <div class="h-14 shrink-0 border-b border-slate-800 flex items-center px-4 md:px-6 gap-3">
+            <button
+                type="button"
+                @click="sidebarOpen = !sidebarOpen"
+                class="md:hidden shrink-0 p-1.5 -ml-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+                aria-label="Buka daftar percakapan"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+            </button>
+            <div class="min-w-0">
+                <h1 class="text-sm font-semibold text-slate-200 truncate">AI Engineer</h1>
+                <span class="text-xs text-slate-500">Ditenagai OpenRouter.</span>
+            </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto px-6 py-6 space-y-6" x-ref="scrollArea">
+        <div class="flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6 space-y-6" x-ref="scrollArea">
             <template x-if="messages.length === 0">
                 <div class="h-full flex flex-col items-center justify-center text-center text-slate-500">
                     <div class="text-3xl mb-2">🤖</div>
@@ -113,7 +147,7 @@
             <template x-for="(msg, idx) in messages" :key="idx">
                 <div class="flex gap-3" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
                     <div
-                        class="max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed"
+                        class="max-w-[88%] sm:max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed"
                         :class="msg.role === 'user'
                             ? 'bg-teal-600 text-white rounded-br-sm'
                             : 'bg-slate-800 text-slate-100 rounded-bl-sm border border-slate-700 markdown-body'"
@@ -135,7 +169,7 @@
             </template>
         </div>
 
-        <form @submit.prevent="sendMessage()" class="border-t border-slate-800 p-4">
+        <form @submit.prevent="sendMessage()" class="border-t border-slate-800 p-3 sm:p-4">
             <div class="flex items-end gap-3 rounded-xl border border-slate-700 bg-slate-900 focus-within:border-teal-500 transition px-3 py-2">
                 <textarea
                     x-model="draft"
@@ -223,6 +257,8 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
         isStreaming: false,
         deleteUrlTemplate,
         indexUrl,
+        // Terbuka default di desktop (>= md, 768px), tertutup default di mobile.
+        sidebarOpen: window.innerWidth >= 768,
 
         getCsrfToken() {
             const meta = document.querySelector('meta[name="csrf-token"]');
