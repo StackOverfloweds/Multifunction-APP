@@ -1,13 +1,15 @@
 {{--
-    AI Engineer — Chat Interface
-    Layout: sidebar riwayat (kiri) + area chat (kanan)
-    Styling: Tailwind (dipakai project ini) + Alpine.js (via CDN, ringan, tanpa build step tambahan)
-    Streaming: fetch() + ReadableStream membaca SSE dari route ai-engineer.send
+    AI Engineer — Chat Interface (versi OpenRouter via laravel/ai)
 
-    CATATAN: layout/app.blade.php di project ini adalah Blade Component (pakai {{ $slot }}),
-    jadi dipanggil lewat <x-app-layout>...</x-app-layout>, bukan @extends/@section.
-    Kalau layout Anda TIDAK punya slot bernama "header", hapus saja blok
-    <x-slot name="header"> di bawah — sisanya tetap berfungsi normal.
+    Perbedaan dari versi Ollama sebelumnya:
+    - Backend sekarang me-return stream langsung dari SDK (usingVercelDataProtocol()),
+      jadi format event SSE-nya BUKAN {"content": "..."} custom kita lagi,
+      melainkan format resmi Vercel AI protocol: {"type":"text-delta","delta":"..."}
+    - Riwayat percakapan (messages) sekarang datang dari relasi resmi
+      $activeConversation->messages, bukan model AiMessage custom kita.
+      NAMA KOLOM di bawah ini (role/content) adalah ASUMSI mengikuti konvensi
+      umum — kalau setelah migrate ternyata beda, sesuaikan bagian
+      $m->role / $m->content di PHP dan JS di bawah.
 --}}
 <x-app-layout>
     <x-slot name="header">
@@ -50,9 +52,9 @@
                             ? 'border-teal-400 bg-slate-800/70 text-slate-50'
                             : 'border-transparent text-slate-400 hover:bg-slate-800/40 hover:text-slate-200' }}"
                 >
-                    <div class="truncate font-medium">{{ $conv->title }}</div>
+                    <div class="truncate font-medium">{{ $conv->title ?? 'Percakapan' }}</div>
                     <div class="text-xs text-slate-500 mt-0.5">
-                        {{ $conv->last_message_at?->diffForHumans() ?? 'Belum ada pesan' }}
+                        {{ $conv->updated_at?->diffForHumans() ?? '' }}
                     </div>
                 </a>
             @empty
@@ -64,19 +66,17 @@
 
         <div class="p-3 border-t border-slate-800 text-xs text-slate-500 flex items-center gap-2">
             <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            Model: <span class="font-mono text-slate-400">{{ config('ai.default_model') }}</span> (offline)
+            Model: <span class="font-mono text-slate-400">{{ config('ai.providers.openrouter.models.text.default') }}</span> (OpenRouter)
         </div>
     </aside>
 
     {{-- CHAT AREA --}}
     <main class="flex-1 flex flex-col min-w-0">
-        {{-- Header --}}
         <div class="h-14 shrink-0 border-b border-slate-800 flex items-center px-6">
             <h1 class="text-sm font-semibold text-slate-200">AI Engineer</h1>
-            <span class="ml-2 text-xs text-slate-500">Tanya apa saja, dijawab lokal &mdash; tanpa data keluar server.</span>
+            <span class="ml-2 text-xs text-slate-500">Ditenagai OpenRouter.</span>
         </div>
 
-        {{-- Messages --}}
         <div class="flex-1 overflow-y-auto px-6 py-6 space-y-6" x-ref="scrollArea">
             <template x-if="messages.length === 0">
                 <div class="h-full flex flex-col items-center justify-center text-center text-slate-500">
@@ -88,11 +88,11 @@
             <template x-for="(msg, idx) in messages" :key="idx">
                 <div class="flex gap-3" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
                     <div
-                        class="max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap"
+                        class="max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed"
                         :class="msg.role === 'user'
                             ? 'bg-teal-600 text-white rounded-br-sm'
-                            : 'bg-slate-800 text-slate-100 rounded-bl-sm border border-slate-700'"
-                        x-text="msg.content"
+                            : 'bg-slate-800 text-slate-100 rounded-bl-sm border border-slate-700 markdown-body'"
+                        x-html="renderMessage(msg)"
                     ></div>
                 </div>
             </template>
@@ -110,7 +110,6 @@
             </template>
         </div>
 
-        {{-- Input --}}
         <form @submit.prevent="sendMessage()" class="border-t border-slate-800 p-4">
             <div class="flex items-end gap-3 rounded-xl border border-slate-700 bg-slate-900 focus-within:border-teal-500 transition px-3 py-2">
                 <textarea
@@ -133,7 +132,65 @@
     </main>
 </div>
 
+<script src="//cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" defer></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js" defer></script>
 <script src="//unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+
+<style>
+    /* Styling manual untuk hasil render Markdown di bubble chat AI —
+       Tailwind tidak otomatis mempercantik tag HTML mentah seperti
+       <strong>, <ul>, <code>, dst, jadi perlu di-style eksplisit di sini. */
+    .markdown-body { line-height: 1.65; }
+    .markdown-body > *:first-child { margin-top: 0; }
+    .markdown-body > *:last-child { margin-bottom: 0; }
+    .markdown-body p { margin: 0.5em 0; }
+    .markdown-body strong { font-weight: 700; color: #f1f5f9; }
+    .markdown-body em { font-style: italic; }
+    .markdown-body ul, .markdown-body ol { margin: 0.5em 0; padding-left: 1.4em; }
+    .markdown-body ul { list-style-type: disc; }
+    .markdown-body ol { list-style-type: decimal; }
+    .markdown-body li { margin: 0.2em 0; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+        font-weight: 700; color: #f1f5f9; margin: 0.8em 0 0.4em;
+    }
+    .markdown-body h1 { font-size: 1.25em; }
+    .markdown-body h2 { font-size: 1.15em; }
+    .markdown-body h3 { font-size: 1.05em; }
+    .markdown-body code {
+        background: rgba(148, 163, 184, 0.15);
+        padding: 0.15em 0.4em;
+        border-radius: 0.3em;
+        font-size: 0.85em;
+        font-family: ui-monospace, monospace;
+        color: #5eead4;
+    }
+    .markdown-body pre {
+        background: #0f172a;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 0.5em;
+        padding: 0.8em 1em;
+        margin: 0.6em 0;
+        overflow-x: auto;
+    }
+    .markdown-body pre code {
+        background: none;
+        padding: 0;
+        color: #e2e8f0;
+    }
+    .markdown-body blockquote {
+        border-left: 3px solid #14b8a6;
+        padding-left: 0.8em;
+        margin: 0.6em 0;
+        color: #94a3b8;
+    }
+    .markdown-body a { color: #2dd4bf; text-decoration: underline; }
+    .markdown-body table { border-collapse: collapse; margin: 0.6em 0; width: 100%; }
+    .markdown-body th, .markdown-body td {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        padding: 0.4em 0.6em;
+        text-align: left;
+    }
+</style>
 <script>
 function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl }) {
     return {
@@ -142,16 +199,44 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
         draft: '',
         isStreaming: false,
 
+        getCsrfToken() {
+            const meta = document.querySelector('meta[name="csrf-token"]');
+            if (!meta) {
+                alert('CSRF token meta tag tidak ditemukan di halaman. Cek layout <head> Anda.');
+                throw new Error('Missing csrf-token meta tag');
+            }
+            return meta.content;
+        },
+
         async createConversation() {
-            const res = await fetch(storeUrl, {
-                method: 'POST',
-                headers: {
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                    'Accept': 'application/json',
-                },
-            });
-            if (res.redirected) {
-                window.location.href = res.url;
+            try {
+                const res = await fetch(storeUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': this.getCsrfToken(),
+                        'Accept': 'application/json',
+                    },
+                });
+
+                if (res.status === 419) {
+                    alert('Sesi kadaluarsa (CSRF token invalid). Silakan refresh halaman lalu coba lagi.');
+                    return;
+                }
+
+                if (!res.ok && !res.redirected) {
+                    alert('Gagal membuat percakapan baru. Status: ' + res.status);
+                    return;
+                }
+
+                if (res.redirected) {
+                    window.location.href = res.url;
+                } else {
+                    // fallback kalau server tidak redirect (mis. return JSON)
+                    window.location.reload();
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Terjadi kesalahan saat membuat percakapan baru: ' + e.message);
             }
         },
 
@@ -160,8 +245,10 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
             if (!text || this.isStreaming) return;
 
             if (!this.conversationId) {
+                // Tidak lagi lazy-create — arahkan dulu ke createConversation()
+                // supaya ID sudah pasti ada sebelum kirim pesan pertama.
                 await this.createConversation();
-                return; // halaman akan reload setelah redirect
+                return;
             }
 
             this.messages.push({ role: 'user', content: text });
@@ -177,10 +264,19 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        'X-CSRF-TOKEN': this.getCsrfToken(),
                     },
                     body: JSON.stringify({ message: text }),
                 });
+
+                if (response.status === 419) {
+                    this.messages[assistantIndex].content = 'Sesi kadaluarsa (CSRF token invalid). Refresh halaman dan coba lagi.';
+                    return;
+                }
+
+                if (!response.ok || !response.body) {
+                    throw new Error('Request gagal: ' + response.status);
+                }
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
@@ -195,21 +291,63 @@ function aiEngineer({ conversationId, initialMessages, sendUrlTemplate, storeUrl
                     buffer = parts.pop();
 
                     for (const part of parts) {
-                        const line = part.replace(/^data: /, '').trim();
-                        if (line === '[DONE]' || line === '') continue;
+                        const line = part.replace(/^data:\s*/, '').trim();
+                        if (line === '' || line === '[DONE]') continue;
 
+                        let event;
                         try {
-                            const json = JSON.parse(line);
-                            this.messages[assistantIndex].content += json.content ?? '';
-                            this.scrollToBottom();
-                        } catch (e) { /* abaikan baris tidak valid */ }
+                            event = JSON.parse(line);
+                        } catch (e) {
+                            continue; // baris tidak valid, abaikan
+                        }
+
+                        // Format resmi Vercel AI protocol yang dipakai laravel/ai:
+                        // {"type":"text-delta","id":"...","delta":"..."}
+                        // {"type":"text-start"|"text-end", ...}  -> diabaikan, cuma penanda
+                        // {"type":"finish", ...}                 -> stream selesai
+                        // {"type":"error","errorText":"..."}     -> tampilkan sebagai error
+                        switch (event.type) {
+                            case 'text-delta':
+                                this.messages[assistantIndex].content += event.delta ?? '';
+                                this.scrollToBottom();
+                                break;
+                            case 'error':
+                                this.messages[assistantIndex].content =
+                                    'Maaf, terjadi kesalahan: ' + (event.errorText ?? 'unknown error');
+                                break;
+                            // tipe lain (text-start, text-end, finish, tool-*, dll) sengaja diabaikan di UI ini
+                        }
                     }
                 }
             } catch (e) {
                 this.messages[assistantIndex].content = 'Maaf, terjadi kesalahan menghubungi model AI.';
+                console.error(e);
             } finally {
                 this.isStreaming = false;
             }
+        },
+
+        renderMessage(msg) {
+            if (msg.role === 'user') {
+                // Pesan user: bukan markdown, cukup escape HTML manual
+                // (cegah XSS kalau user ketik teks mengandung tag html)
+                // lalu ganti newline jadi <br> supaya line break tetap kelihatan.
+                const div = document.createElement('div');
+                div.textContent = msg.content;
+                return div.innerHTML.replace(/\n/g, '<br>');
+            }
+
+            // Pesan AI: parse markdown -> HTML, lalu sanitasi.
+            // DOMPurify WAJIB dipakai di sini — teks dari model AI tidak
+            // boleh dipercaya mentah-mentah, bisa saja (sengaja/tidak
+            // sengaja) mengandung tag <script> atau sejenisnya.
+            if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+                // fallback kalau CDN gagal load, minimal tidak error
+                return msg.content;
+            }
+
+            const html = marked.parse(msg.content ?? '');
+            return DOMPurify.sanitize(html);
         },
 
         scrollToBottom() {

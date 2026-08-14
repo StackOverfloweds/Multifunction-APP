@@ -2,83 +2,85 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AiConversation;
-use App\Services\AIEngineerService;
+use App\Ai\Agents\AiEngineerAgent;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Illuminate\Support\Str;
+use Laravel\Ai\Models\Conversation;
 
 class AIEngineerController extends Controller
 {
-    public function __construct(protected AIEngineerService $ai) {}
-
     /**
      * Halaman utama chat (Blade).
      */
     public function index(Request $request)
     {
-        $conversations = AiConversation::query()
-            ->where('user_id', Auth::id())
-            ->where('is_archived', false)
-            ->orderByDesc('last_message_at')
+        $conversations = Auth::user()->conversations()
+            ->latest('updated_at')
             ->get();
 
         $activeConversation = null;
 
         if ($request->filled('conversation')) {
-            $activeConversation = AiConversation::query()
-                ->where('user_id', Auth::id())
+            // Pakai relasi $user->conversations() untuk query, bukan
+            // Conversation::find() langsung — supaya otomatis ter-scope
+            // ke milik user ini tanpa perlu tahu/pegang nama kolom
+            // internal (participant_id/participant_type dsb) yang bisa
+            // berbeda antar versi paket.
+            $activeConversation = Auth::user()->conversations()
+                ->whereKey($request->query('conversation'))
                 ->with('messages')
-                ->findOrFail($request->query('conversation'));
+                ->firstOrFail();
         }
 
         return view('ai-engineer.index', compact('conversations', 'activeConversation'));
     }
 
     /**
-     * Buat percakapan baru lalu redirect ke halaman chat.
+     * Buat percakapan baru (row kosong) lalu redirect ke halaman chat.
+     * Dibuat eksplisit (bukan lazy saat prompt pertama) supaya ID-nya
+     * langsung tersedia untuk sidebar & URL, tanpa perlu menunggu
+     * respons AI pertama selesai.
      */
     public function store(Request $request)
     {
-        $conversation = $this->ai->startConversation(Auth::id());
+        // Kolom id di tabel agent_conversations adalah string(36) primary key,
+        // TAPI tidak auto-generate lewat Eloquent create() biasa (SDK biasanya
+        // generate ID sendiri lewat alur forUser()->prompt(), bukan create()
+        // langsung seperti ini) — jadi isi manual di sini.
+        $conversation = Auth::user()->conversations()->create([
+            'id' => (string) Str::orderedUuid(),
+            'title' => 'Percakapan Baru',
+        ]);
 
         return redirect()->route('ai-engineer.index', ['conversation' => $conversation->id]);
     }
 
     /**
-     * Endpoint streaming (Server-Sent Events) — dipanggil via fetch() dari Blade/Alpine.
+     * Endpoint streaming. Cukup return langsung objek stream dari SDK —
+     * laravel/ai yang urus header SSE, buffering, dan formatnya.
+     * usingVercelDataProtocol() dipakai supaya format event-nya baku
+     * dan gampang di-parse di sisi frontend (event: text-delta, finish, dll).
      */
-    public function send(Request $request, AiConversation $conversation): StreamedResponse
+    public function send(Request $request, Conversation $conversation)
     {
-        abort_unless($conversation->user_id === Auth::id(), 403);
+        // Sama seperti index(): otorisasi lewat relasi, bukan kolom mentah.
+        abort_unless(
+            Auth::user()->conversations()->whereKey($conversation->id)->exists(),
+            403
+        );
 
         $request->validate([
             'message' => ['required', 'string', 'max:8000'],
         ]);
 
-        return response()->stream(function () use ($conversation, $request) {
-            // matikan output buffering PHP kalau ada, biar setiap echo langsung terkirim
-            while (ob_get_level() > 0) {
-                ob_end_flush();
-            }
+        // set_time_limit(0) penting untuk request panjang (reasoning model,
+        // tool call berantai, dll) supaya tidak keputus oleh max_execution_time.
+        set_time_limit(0);
 
-            $this->ai->streamResponse($conversation, $request->input('message'), function (string $piece) {
-                echo 'data: ' . json_encode(['content' => $piece]) . "\n\n";
-                if (ob_get_level() > 0) {
-                    ob_flush();
-                }
-                flush();
-            });
-
-            echo "data: [DONE]\n\n";
-            if (ob_get_level() > 0) {
-                ob_flush();
-            }
-            flush();
-        }, 200, [
-            'Content-Type' => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
-            'X-Accel-Buffering' => 'no', // penting agar Nginx tidak buffer SSE
-        ]);
+        return (new AiEngineerAgent)
+            ->continue($conversation->id, as: Auth::user())
+            ->stream($request->input('message'))
+            ->usingVercelDataProtocol();
     }
 }
