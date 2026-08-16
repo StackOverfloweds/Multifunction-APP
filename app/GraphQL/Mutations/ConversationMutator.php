@@ -23,10 +23,24 @@ class ConversationMutator
         ]);
     }
 
+    public function delete($_, array $args): bool
+    {
+        $user = auth('api')->user();
+ 
+        $conversation = Conversation::where('id', $args['id'])
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+ 
+        $conversation->messages()->delete();
+        $conversation->delete();
+ 
+        return true;
+    }
+
     public function sendMessage($_, array $args): Message
     {
         $user = auth('api')->user();
-
+ 
         $conversation = isset($args['conversationId'])
             ? Conversation::where('id', $args['conversationId'])
                 ->where('user_id', $user->id)
@@ -35,24 +49,24 @@ class ConversationMutator
                 'user_id' => $user->id,
                 'title' => str($args['content'])->limit(40),
             ]);
-
+ 
         $conversation->messages()->create([
             'role' => 'user',
             'content' => $args['content'],
         ]);
-
+ 
         $history = $conversation->messages()
             ->orderBy('created_at')
             ->get(['role', 'content'])
             ->map(fn ($m) => ['role' => $m->role, 'content' => $m->content])
             ->toArray();
-
+ 
         try {
             $reply = $this->openAI->chat($history);
         } catch (\Throwable $e) {
             throw new Error('Gagal menghubungi AI provider: '.$e->getMessage());
         }
-
+ 
         return $conversation->messages()->create([
             'role' => 'assistant',
             'content' => $reply,

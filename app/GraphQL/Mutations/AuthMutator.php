@@ -35,7 +35,6 @@ class AuthMutator
     {
         $payload = JWTAuth::setToken($token)->getPayload();
         $jti = $payload->get('jti');
-
         Redis::setex(
             "session:user:{$user->id}:{$jti}",
             $this->redisTtlSeconds(),
@@ -44,6 +43,7 @@ class AuthMutator
                 'issued_at' => now()->toIso8601String(),
             ])
         );
+        
     }
 
     public function register($_, array $args): array
@@ -72,26 +72,28 @@ class AuthMutator
         return $this->buildPayload($token, $user);
     }
 
-    public function login($_, array $args): array
+        public function login($_, array $args): array
     {
-        // Login pakai "username", bukan "email" — konsisten dengan LoginRequest asli.
         $credentials = [
             'username' => $args['username'],
             'password' => $args['password'],
         ];
 
-       try {
-            $token = JWTAuth::attempt($credentials);
-       } catch (Exception $e) {
-        throw new Exception('Email Atau Password Salah');
-       }
+        /** @var \Tymon\JWTAuth\JWTGuard $guard */
+        $guard = auth('api');
 
-       if (!$token) {
-        throw new Exception('Email atau password Salah');
-       }
+        try {
+            $token = $guard->attempt($credentials);
+        } catch (Exception $e) {
+            throw new Exception('Email atau password salah.');
+        }
+
+        if (! $token) {
+            throw new Exception('Email atau password salah.');
+        }
 
         /** @var User $user */
-        $user = auth('api')->user();
+        $user = $guard->user();
         $this->storeSession($token, $user);
 
         return $this->buildPayload($token, $user);
