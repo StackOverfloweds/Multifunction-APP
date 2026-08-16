@@ -1,0 +1,178 @@
+scalar Upload @scalar(class: "MLL\\GraphQLScalars\\Upload")
+scalar DateTime @scalar(class: "MLL\\GraphQLScalars\\DateTime")
+
+enum UserRole {
+    SUPER_ADMIN @enum(value: "super_admin")
+    ADMIN @enum(value: "admin")
+    USER @enum(value: "user")
+}
+
+type User {
+    id: ID!
+    username: String!
+    email: String
+    role: UserRole!
+}
+
+type AuthPayload {
+    token: String!
+    tokenType: String!
+    expiresIn: Int!
+    user: User!
+}
+
+# ---------- Storage Management (FileStorage + Folder) ----------
+
+type FileStorage {
+    id: ID!
+    originalName: String! @rename(attribute: "original_name")
+    filePath: String! @rename(attribute: "file_path")
+    mimeType: String! @rename(attribute: "mime_type")
+    fileSize: Int! @rename(attribute: "file_size")
+    fileHash: String @rename(attribute: "file_hash")
+    storageNode: String! @rename(attribute: "storage_node")
+    visibility: String!
+    owner: User! @belongsTo(relation: "user")
+    folder: Folder @belongsTo
+    createdAt: DateTime! @rename(attribute: "created_at")
+}
+
+type Folder {
+    id: ID!
+    name: String!
+    parent: Folder
+    children: [Folder!]!
+    createdAt: DateTime! @rename(attribute: "created_at")
+}
+
+"Item flat dipakai untuk membangun tree folder di sisi frontend (setara FolderController::tree)."
+type FolderTreeItem {
+    id: ID!
+    parentId: ID
+    name: String!
+}
+
+type FileStoragePaginator {
+    data: [FileStorage!]!
+    total: Int!
+    currentPage: Int!
+    lastPage: Int!
+}
+
+type UploadChunkResult {
+    "uploading | completed"
+    status: String!
+    message: String!
+    progress: Float
+    received: Int
+    total: Int
+    missingChunks: [Int!]
+    file: FileStorage
+}
+
+# ---------- AI Conversation (package laravel/ai) ----------
+# Catatan: mutation "sendMessage" SENGAJA TIDAK ADA di sini.
+# Endpoint kirim pesan tetap REST + SSE streaming (lihat routes/api.php),
+# karena GraphQL standar tidak cocok untuk response streaming token-by-token.
+# GraphQL di sini hanya untuk listing riwayat percakapan.
+
+type ConversationMessage {
+    id: ID!
+    role: String!
+    content: String!
+    createdAt: DateTime! @rename(attribute: "created_at")
+}
+
+type Conversation {
+    id: ID!
+    title: String!
+    messages: [ConversationMessage!]!
+    createdAt: DateTime! @rename(attribute: "created_at")
+    updatedAt: DateTime! @rename(attribute: "updated_at")
+}
+
+type Query {
+    me: User @guard(with: ["api"])
+
+    files(folderId: ID, search: String, page: Int, first: Int): FileStoragePaginator!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Queries\\StorageQuery@files")
+
+    folderTree: [FolderTreeItem!]!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Queries\\FolderQuery@tree")
+
+    conversations: [Conversation!]!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Queries\\ConversationQuery@list")
+
+    conversation(id: ID!): Conversation
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Queries\\ConversationQuery@find")
+}
+
+type Mutation {
+    register(username: String!, email: String, password: String!, passwordConfirmation: String!): AuthPayload
+        @field(resolver: "App\\GraphQL\\Mutations\\AuthMutator@register")
+
+    login(username: String!, password: String!): AuthPayload
+        @field(resolver: "App\\GraphQL\\Mutations\\AuthMutator@login")
+
+    refreshToken: AuthPayload
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\AuthMutator@refresh")
+
+    logout: Boolean
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\AuthMutator@logout")
+
+    # --- Folder (setara FolderController) ---
+    createFolder(name: String!, parentId: ID): Folder!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\FolderMutator@create")
+
+    renameFolder(id: ID!, name: String!): Folder!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\FolderMutator@rename")
+
+    moveFolder(id: ID!, parentId: ID): Folder!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\FolderMutator@move")
+
+    deleteFolder(id: ID!): Boolean!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\FolderMutator@delete")
+
+    resolveFolderPath(path: String!, parentId: ID): ID
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\FolderMutator@resolvePath")
+
+    # --- Storage (setara StorageController) ---
+    uploadChunk(
+        file: Upload!
+        uploadId: String!
+        chunkIndex: Int!
+        totalChunks: Int!
+        filename: String!
+        folderId: ID
+    ): UploadChunkResult!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\StorageMutator@uploadChunk")
+
+    moveFile(id: ID!, folderId: ID): FileStorage!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\StorageMutator@move")
+
+    deleteFile(id: ID!): Boolean!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\StorageMutator@delete")
+
+    # --- AI Conversation (metadata saja, bukan kirim pesan) ---
+    startConversation: Conversation!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\ConversationMutator@start")
+
+    deleteConversation(id: ID!): Boolean!
+        @guard(with: ["api"])
+        @field(resolver: "App\\GraphQL\\Mutations\\ConversationMutator@delete")
+}
